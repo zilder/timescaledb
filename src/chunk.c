@@ -3778,6 +3778,98 @@ lock_referenced_tables(Oid table_relid)
 		LockRelationOid(lfirst_oid(lf), AccessExclusiveLock);
 }
 
+#define OSM_EXTENSION_NAME "timescaledb_osm"
+#define OSM_FDW_HANDLER "pfdw_handler_wrapper"
+
+#include <catalog/pg_extension_d.h>
+#include <commands/extension.h>
+
+static char *
+extension_version(char const *const extension_name)
+{
+	Datum result;
+	Relation rel;
+	SysScanDesc scandesc;
+	HeapTuple tuple;
+	ScanKeyData entry[1];
+	bool is_null = true;
+	char *sql_version = NULL;
+
+	rel = table_open(ExtensionRelationId, AccessShareLock);
+
+	ScanKeyInit(&entry[0],
+				Anum_pg_extension_extname,
+				BTEqualStrategyNumber,
+				F_NAMEEQ,
+				CStringGetDatum(extension_name));
+
+	scandesc = systable_beginscan(rel, ExtensionNameIndexId, true, NULL, 1, entry);
+
+	tuple = systable_getnext(scandesc);
+
+	/* We assume that there can be at most one matching tuple */
+	if (HeapTupleIsValid(tuple))
+	{
+		result = heap_getattr(tuple, Anum_pg_extension_extversion, RelationGetDescr(rel), &is_null);
+
+		if (!is_null)
+		{
+			sql_version = pstrdup(TextDatumGetCString(result));
+		}
+	}
+
+	systable_endscan(scandesc);
+	table_close(rel, AccessShareLock);
+
+	if (sql_version == NULL)
+	{
+		elog(ERROR, "extension not found while getting version");
+	}
+	return sql_version;
+}
+
+static bool try_load_osm() {
+	bool res = false;
+	Oid osm_extension_oid = get_extension_oid(OSM_EXTENSION_NAME, true);
+
+	if (OidIsValid(osm_extension_oid))
+	{
+		char version[MAX_VERSION_LEN];
+		char soname[MAX_SO_NAME_LEN];
+		MemoryContext old_mcxt;
+
+		strlcpy(version, extension_version(OSM_EXTENSION_NAME), MAX_VERSION_LEN);
+		snprintf(soname, MAX_SO_NAME_LEN, "%s%s-%s",
+			TS_LIBDIR,
+			OSM_EXTENSION_NAME,
+			version);
+
+		old_mcxt = CurrentMemoryContext;
+		PG_TRY();
+		{
+			load_external_function(soname, OSM_FDW_HANDLER, false, NULL);
+			res = true;
+		}
+		PG_CATCH();
+		{
+			ErrorData *error;
+
+			/* Switch to the original context & copy edata */
+			MemoryContextSwitchTo(old_mcxt);
+			error = CopyErrorData();
+			FlushErrorState();
+
+			elog(LOG, "try_load_osm(): %s", error->message);
+
+			/* Finally, free error data */
+			FreeErrorData(error);
+		}
+		PG_END_TRY();
+	}
+
+	return res;
+}
+
 List *
 ts_chunk_do_drop_chunks(Hypertable *ht, int64 older_than, int64 newer_than, int32 log_level,
 						Oid time_type, Oid arg_type, bool older_newer)
@@ -3793,6 +3885,9 @@ ts_chunk_do_drop_chunks(Hypertable *ht, int64 older_than, int64 newer_than, int3
 		.waitpolicy = LockWaitBlock,
 		.lockmode = LockTupleExclusive,
 	};
+
+	elog(LOG, "retention worker pid: %i", getpid());
+	sleep(25);
 
 	ts_hypertable_permissions_check(ht->main_table_relid, GetUserId());
 
@@ -3954,6 +4049,15 @@ ts_chunk_do_drop_chunks(Hypertable *ht, int64 older_than, int64 newer_than, int3
 	{
 		hypertable_drop_chunks_hook_type osm_drop_chunks_hook =
 			ts_get_osm_hypertable_drop_chunks_hook();
+
+		/*
+		 * OSM library may not be loaded at the moment if `ts_chunk_do_drop_chunks`
+		 * is called from the a background worker. If this is the case try to
+		 * load it now.
+		 */
+		if (!osm_drop_chunks_hook && try_load_osm())
+			osm_drop_chunks_hook = ts_get_osm_hypertable_drop_chunks_hook();
+
 		if (osm_drop_chunks_hook)
 		{
 			ListCell *lc;
