@@ -923,8 +923,8 @@ chunk_insert_into_metadata_after_lock(const Chunk *chunk)
  * Ensure the replica identity setting of a chunk matches that of the root
  * table.
  */
-static void
-chunk_set_replica_identity(const Chunk *chunk)
+void
+ts_chunk_set_replica_identity(const Chunk *chunk)
 {
 	Relation ht_rel = relation_open(chunk->hypertable_relid, AccessShareLock);
 	Relation ch_rel = relation_open(chunk->table_id, AccessShareLock);
@@ -991,7 +991,7 @@ chunk_create_table_constraints(const Hypertable *ht, const Chunk *chunk)
 								  chunk->table_id,
 								  InvalidOid);
 
-		chunk_set_replica_identity(chunk);
+		ts_chunk_set_replica_identity(chunk);
 	}
 
 	/* Copy FK constraints after indexes are created, since FK validation

@@ -1290,3 +1290,33 @@ ALTER TABLE alter_col_type_test ALTER COLUMN device_id TYPE text;
 
 DROP TABLE alter_col_type_test;
 
+-- REPLICA IDENTITY for compressed chunks
+CREATE TABLE test_replident(key int, val int, device_id int);
+SELECT create_hypertable('test_replident', by_range('key', 1000));
+ALTER TABLE test_replident SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'device_id',
+    timescaledb.compress_orderby = 'key'
+);
+INSERT INTO test_replident
+SELECT gen.val, gen.val, gen.val % 2
+FROM generate_series(1, 1500, 500) as gen(val);
+SELECT compress_chunk(show.chunk) FROM show_chunks('test_replident') show(chunk);
+
+SELECT ch.table_name as chunk, comp_ch.table_name as compressed_chunk, relreplident as compressed_replident
+FROM _timescaledb_catalog.hypertable ht
+JOIN _timescaledb_catalog.chunk ch ON ch.hypertable_id = ht.id
+JOIN _timescaledb_catalog.chunk comp_ch ON comp_ch.id = ch.compressed_chunk_id
+JOIN pg_class pgc ON pgc.oid = format('%I.%I', comp_ch.schema_name, comp_ch.table_name)::regclass
+WHERE ht.table_name = 'test_replident';
+
+ALTER TABLE test_replident REPLICA IDENTITY FULL;
+
+SELECT ch.table_name as chunk, comp_ch.table_name as compressed_chunk, relreplident as compressed_replident
+FROM _timescaledb_catalog.hypertable ht
+JOIN _timescaledb_catalog.chunk ch ON ch.hypertable_id = ht.id
+JOIN _timescaledb_catalog.chunk comp_ch ON comp_ch.id = ch.compressed_chunk_id
+JOIN pg_class pgc ON pgc.oid = format('%I.%I', comp_ch.schema_name, comp_ch.table_name)::regclass
+WHERE ht.table_name = 'test_replident';
+
+DROP TABLE test_replident;

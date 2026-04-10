@@ -172,6 +172,7 @@ extern TSDLLEXPORT void ts_chunk_insert_lock(const Chunk *chunk, LOCKMODE lock);
 
 extern TSDLLEXPORT Oid ts_chunk_create_table(const Chunk *chunk, const Hypertable *ht,
 											 const char *tablespacename);
+extern TSDLLEXPORT void ts_chunk_set_replica_identity(const Chunk *chunk);
 extern TSDLLEXPORT Chunk *ts_chunk_get_by_id_with_slice_lock(int32 id, LOCKMODE chunk_lockmode,
 															 const ScanTupLock *slice_lock,
 															 bool fail_if_not_found);

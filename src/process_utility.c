@@ -4248,6 +4248,33 @@ process_altertable_replica_identity(Hypertable *ht, AlterTableCmd *cmd)
 	}
 
 	foreach_chunk(ht, process_altertable_chunk_replica_identity, cmd);
+
+	/*
+	 * If there is a compressed hypertable it will need to have REPLICA
+	 * IDENTITY set to FULL to allow logical decoding of whole batch deletes.
+	 */
+	if (ht->fd.compressed_hypertable_id)
+	{
+		char identity_type = stmt->identity_type != REPLICA_IDENTITY_NOTHING ?
+			REPLICA_IDENTITY_FULL : REPLICA_IDENTITY_NOTHING;
+
+		ReplicaIdentityStmt stmt = {
+			.type = T_ReplicaIdentityStmt,
+			.identity_type = identity_type,
+		};
+		AlterTableCmd cmd = {
+			.type = T_AlterTableCmd,
+			.def = (Node *) &stmt,
+			.subtype = AT_ReplicaIdentity,
+		};
+
+		Hypertable *compressed_ht =
+			ts_hypertable_get_by_id(ht->fd.compressed_hypertable_id);
+
+		AlterTableInternal(compressed_ht->main_table_relid, list_make1(&cmd), false);
+
+		foreach_compressed_chunk(ht, process_altertable_chunk_replica_identity, &cmd);
+	}
 }
 
 static void

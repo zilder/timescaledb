@@ -26,6 +26,7 @@
 #include <utils/lsyscache.h>
 #include <utils/syscache.h>
 
+#include "chunk.h"
 #include "compression.h"
 #include "compression_storage.h"
 #include "create.h"
@@ -150,6 +151,7 @@ compression_chunk_create(Chunk *src_chunk, Chunk *chunk, List *column_defs, Oid 
 	modify_compressed_toast_table_storage(settings, column_defs, chunk->table_id);
 	set_statistics_on_compressed_chunk(chunk->table_id);
 	set_toast_tuple_target_on_chunk(chunk->table_id);
+	ts_chunk_set_replica_identity(chunk);
 	ts_catalog_restore_user(&sec_ctx);
 
 	create_compressed_chunk_indexes(chunk, settings);
